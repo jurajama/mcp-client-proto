@@ -63,7 +63,7 @@ If your gateway expects the token under a different header instead of `Authoriza
 
 ## Running
 
-Make sure your MCP server is running at `http://localhost:8000/mcp`, then:
+Make sure your MCP server is running at `http://localhost:8000/mcp` (or set `MCP_SERVER_URL` in `.env` to point elsewhere), then:
 
 ```bash
 python client.py

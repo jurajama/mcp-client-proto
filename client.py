@@ -12,7 +12,7 @@ from mcp.client.streamable_http import streamablehttp_client  # adjust if you mo
 
 load_dotenv()
 
-MCP_SERVER_URL = "http://localhost:8000/mcp"
+MCP_SERVER_URL = os.getenv("MCP_SERVER_URL", "http://localhost:8000/mcp")
 
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434/v1")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.2")
