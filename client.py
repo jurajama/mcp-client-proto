@@ -1,5 +1,4 @@
 """Simple MCP client that connects to a local MCP server and provides an interactive chat."""
-
 import asyncio
 import os
 import json
@@ -7,15 +6,20 @@ import json
 from dotenv import load_dotenv
 import anthropic
 from openai import OpenAI
-from mcp import ClientSession
-from mcp.client.streamable_http import streamablehttp_client
 
+from mcp import ClientSession
+from mcp.client.streamable_http import streamablehttp_client  # adjust if you moved to mcp 2.x's streamable_http_client
 
 load_dotenv()
 
 MCP_SERVER_URL = "http://localhost:8000/mcp"
+
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434/v1")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.2")
+
+LITELLM_BASE_URL = os.getenv("LITELLM_BASE_URL")  # e.g. https://litellm.internal.example.com/v1
+LITELLM_API_KEY = os.getenv("LITELLM_API_KEY")    # gateway token, sent as Bearer auth
+LITELLM_MODEL = os.getenv("LITELLM_MODEL", "gpt-4o")  # the model alias configured on your gateway
 
 
 def mcp_tools_to_anthropic(mcp_tools: list) -> list[dict]:
@@ -31,7 +35,7 @@ def mcp_tools_to_anthropic(mcp_tools: list) -> list[dict]:
 
 
 def mcp_tools_to_openai(mcp_tools: list) -> list[dict]:
-    """Convert MCP tool definitions to OpenAI/Ollama API format."""
+    """Convert MCP tool definitions to OpenAI-compatible API format (used by Ollama and LiteLLM)."""
     return [
         {
             "type": "function",
@@ -46,8 +50,7 @@ def mcp_tools_to_openai(mcp_tools: list) -> list[dict]:
 
 
 async def chat_loop(session: ClientSession, client: anthropic.Anthropic):
-    """Run the interactive chat loop using Anthropic Claude."""
-    # Discover tools from the MCP server
+    """Run the interactive chat loop using Anthropic Claude directly."""
     tools_result = await session.list_tools()
     tools = mcp_tools_to_anthropic(tools_result.tools)
 
@@ -83,18 +86,15 @@ async def chat_loop(session: ClientSession, client: anthropic.Anthropic):
                 messages=messages,
             )
 
-            # Collect assistant response
             assistant_content = response.content
             messages.append({"role": "assistant", "content": assistant_content})
 
-            # If no tool calls, print text and break
             if response.stop_reason == "end_turn":
                 for block in assistant_content:
                     if hasattr(block, "text"):
                         print(f"\nClaude: {block.text}\n")
                 break
 
-            # Handle tool calls
             if response.stop_reason == "tool_use":
                 tool_results = []
                 for block in assistant_content:
@@ -102,7 +102,6 @@ async def chat_loop(session: ClientSession, client: anthropic.Anthropic):
                         print(f"  [Calling tool: {block.name}({json.dumps(block.input)})]")
                         try:
                             result = await session.call_tool(block.name, arguments=block.input)
-                            # Extract text content from the MCP result
                             result_text = ""
                             if result.content:
                                 for item in result.content:
@@ -120,18 +119,16 @@ async def chat_loop(session: ClientSession, client: anthropic.Anthropic):
                                 "content": f"Error: {e}",
                                 "is_error": True,
                             })
-
                 messages.append({"role": "user", "content": tool_results})
             else:
-                # Unexpected stop reason, print whatever text we have and break
                 for block in assistant_content:
                     if hasattr(block, "text"):
                         print(f"\nClaude: {block.text}\n")
                 break
 
 
-async def chat_loop_ollama(session: ClientSession, client: OpenAI):
-    """Run the interactive chat loop using a local Ollama model."""
+async def chat_loop_openai_compat(session: ClientSession, client: OpenAI, model: str, label: str):
+    """Run the interactive chat loop against any OpenAI-compatible backend (Ollama, LiteLLM gateway, ...)."""
     tools_result = await session.list_tools()
     tools = mcp_tools_to_openai(tools_result.tools)
 
@@ -141,7 +138,7 @@ async def chat_loop_ollama(session: ClientSession, client: OpenAI):
         print("\nConnected to MCP server. No tools available.")
 
     messages: list[dict] = []
-    print(f"\nChat started (Ollama / {OLLAMA_MODEL}). Type 'quit' to exit.\n")
+    print(f"\nChat started ({label} / {model}). Type 'quit' to exit.\n")
 
     while True:
         try:
@@ -160,7 +157,7 @@ async def chat_loop_ollama(session: ClientSession, client: OpenAI):
 
         # Agentic loop: keep going until the model stops calling tools
         while True:
-            kwargs = {"model": OLLAMA_MODEL, "messages": messages}
+            kwargs = {"model": model, "messages": messages}
             if tools:
                 kwargs["tools"] = tools
 
@@ -168,16 +165,14 @@ async def chat_loop_ollama(session: ClientSession, client: OpenAI):
             msg = response.choices[0].message
             finish_reason = response.choices[0].finish_reason
 
-            # Append assistant message to history (preserve tool_calls for context)
             messages.append({
                 "role": "assistant",
                 "content": msg.content,
                 "tool_calls": msg.tool_calls,
             })
 
-            # Stop if no tool calls (guard handles models that return "stop" with tool calls)
             if finish_reason == "stop" or not msg.tool_calls:
-                print(f"\nOllama: {msg.content}\n")
+                print(f"\n{label}: {msg.content}\n")
                 break
 
             if finish_reason == "tool_calls":
@@ -195,16 +190,14 @@ async def chat_loop_ollama(session: ClientSession, client: OpenAI):
                     except Exception as e:
                         result_text = f"Error: {e}"
 
-                    # OpenAI tool results use role="tool" with tool_call_id
                     messages.append({
                         "role": "tool",
                         "tool_call_id": tc.id,
                         "content": result_text,
                     })
             else:
-                # Unexpected finish reason
                 if msg.content:
-                    print(f"\nOllama: {msg.content}\n")
+                    print(f"\n{label}: {msg.content}\n")
                 break
 
 
@@ -218,7 +211,6 @@ async def main():
             return
 
         client = anthropic.Anthropic(api_key=api_key)
-
         print("Testing Anthropic API key...")
         try:
             test_response = client.messages.create(
@@ -243,7 +235,6 @@ async def main():
 
     elif provider == "ollama":
         client = OpenAI(base_url=OLLAMA_BASE_URL, api_key="ollama")
-
         print(f"Testing Ollama at {OLLAMA_BASE_URL} with model '{OLLAMA_MODEL}'...")
         try:
             test_response = client.chat.completions.create(
@@ -259,13 +250,38 @@ async def main():
             print(f"  ollama serve")
             return
 
-        loop_fn = lambda session: chat_loop_ollama(session, client)
+        loop_fn = lambda session: chat_loop_openai_compat(session, client, OLLAMA_MODEL, "Ollama")
+
+    elif provider == "litellm":
+        if not LITELLM_BASE_URL:
+            print("Error: LITELLM_BASE_URL not found in .env file.")
+            return
+        if not LITELLM_API_KEY:
+            print("Error: LITELLM_API_KEY not found in .env file.")
+            return
+
+        client = OpenAI(base_url=LITELLM_BASE_URL, api_key=LITELLM_API_KEY)
+        print(f"Testing LiteLLM gateway at {LITELLM_BASE_URL} with model '{LITELLM_MODEL}'...")
+        try:
+            test_response = client.chat.completions.create(
+                model=LITELLM_MODEL,
+                max_tokens=50,
+                messages=[{"role": "user", "content": "Say 'hello' in one word."}],
+            )
+            print(f"Gateway works! Response: {test_response.choices[0].message.content}")
+        except Exception as e:
+            # Surfaces 401s from a bad/expired token as well as other gateway errors
+            print(f"Error connecting to LiteLLM gateway: {e}")
+            print("Check LITELLM_BASE_URL, LITELLM_API_KEY, and that LITELLM_MODEL is a valid model alias on the gateway.")
+            return
+
+        loop_fn = lambda session: chat_loop_openai_compat(session, client, LITELLM_MODEL, "LiteLLM")
 
     else:
-        print(f"Error: Unknown MODEL_PROVIDER '{provider}'. Use 'anthropic' or 'ollama'.")
+        print(f"Error: Unknown MODEL_PROVIDER '{provider}'. Use 'anthropic', 'ollama', or 'litellm'.")
         return
 
-    # Connect to MCP server and start chat (shared for both providers)
+    # Connect to MCP server and start chat (shared across all providers)
     print(f"\nConnecting to MCP server at {MCP_SERVER_URL}...")
     try:
         async with streamablehttp_client(MCP_SERVER_URL) as (read_stream, write_stream, _):
