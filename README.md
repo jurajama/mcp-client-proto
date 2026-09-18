@@ -5,8 +5,10 @@ Prototyping MCP client implementation
 Create a virtual environment and install dependencies:
 
 ```bash
-python3 -m venv .venv && source .venv/bin/activate && pip install anthropic mcp python-dotenv openai
+python3 -m venv .venv && source .venv/bin/activate && pip install anthropic "mcp>=1.28,<2" python-dotenv openai
 ```
+
+Note that Python 3.10 or later is required as `mcp` package does not work with Python 3.9 or older versions.
 
 ## Configuration
 
