@@ -5,14 +5,14 @@ Prototyping MCP client implementation
 Create a virtual environment and install dependencies:
 
 ```bash
-python3 -m venv .venv && source .venv/bin/activate && pip install anthropic "mcp>=1.28,<2" python-dotenv openai
+python3 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt
 ```
 
 Note that Python 3.10 or later is required as `mcp` package does not work with Python 3.9 or older versions.
 
 ## Configuration
 
-Create a `.env` file in the project root. The client supports two model providers.
+Create a `.env` file in the project root. The client supports three model providers.
 
 ---
 
@@ -46,9 +46,24 @@ For tool/function calling to work, use a model that supports it (e.g. `llama3.1`
 
 ---
 
+### Option 3: LiteLLM gateway
+
+Point the client at a LiteLLM proxy/gateway. The gateway's token is sent as a standard `Authorization: Bearer` header via the OpenAI SDK.
+
+```env
+MODEL_PROVIDER=litellm
+LITELLM_BASE_URL=https://your-litellm-gateway/v1
+LITELLM_API_KEY=your_gateway_token
+LITELLM_MODEL=your-model-alias   # the model alias configured on your gateway
+```
+
+If your gateway expects the token under a different header instead of `Authorization: Bearer`, you'll need to adjust the `OpenAI(...)` client construction in `client.py` accordingly (e.g. via `default_headers`).
+
+---
+
 ## Running
 
-Make sure your MCP server is running at `http://localhost:8000/mcp`, then:
+Make sure your MCP server is running at `http://localhost:8000/mcp` (or set `MCP_SERVER_URL` in `.env` to point elsewhere), then:
 
 ```bash
 python client.py
